@@ -35,6 +35,8 @@
 #include "pvr_macros.h"
 #include "pvr_winsys.h"
 #include "pvr_wsi.h"
+#include "util/detect_os.h"
+#include "vk_android.h"
 
 #define VK_VENDOR_ID_IMAGINATION 0x1010
 
@@ -183,6 +185,9 @@ static void pvr_physical_device_get_supported_extensions(
       .KHR_uniform_buffer_standard_layout = true,
       .KHR_vertex_attribute_divisor = true,
       .KHR_workgroup_memory_explicit_layout = true,
+#if DETECT_OS_ANDROID
+      .ANDROID_native_buffer = vk_android_get_ugralloc() != NULL,
+#endif
       .EXT_border_color_swizzle = true,
       .EXT_color_write_enable = true,
       .EXT_custom_border_color = true,

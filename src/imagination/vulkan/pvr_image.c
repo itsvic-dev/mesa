@@ -40,6 +40,8 @@
 #include "util/macros.h"
 #include "util/u_math.h"
 #include "vk_format.h"
+#include "util/detect_os.h"
+#include "vk_android.h"
 #include "vk_image.h"
 #include "vk_log.h"
 #include "vk_object.h"
@@ -272,12 +274,47 @@ VkResult pvr_CreateImage(VkDevice _device,
                                                pImage);
    }
 
+#if DETECT_OS_ANDROID
+   /* A gralloc buffer: create the image with its explicit linear layout. */
+   VkImageDrmFormatModifierExplicitCreateInfoEXT anb_mod;
+   VkSubresourceLayout anb_layouts[4];
+   VkImageCreateInfo anb_info;
+
+   if (vk_find_struct_const(pCreateInfo->pNext, NATIVE_BUFFER_ANDROID)) {
+      VkResult result =
+         vk_android_get_anb_layout(pCreateInfo, &anb_mod, anb_layouts, 4);
+      if (result != VK_SUCCESS)
+         return vk_error(device, result);
+
+      if (anb_mod.drmFormatModifier == DRM_FORMAT_MOD_INVALID)
+         anb_mod.drmFormatModifier = DRM_FORMAT_MOD_LINEAR;
+      if (anb_mod.drmFormatModifier != DRM_FORMAT_MOD_LINEAR)
+         return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
+
+      anb_mod.pNext = pCreateInfo->pNext;
+      anb_info = *pCreateInfo;
+      anb_info.pNext = &anb_mod;
+      anb_info.tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
+      pCreateInfo = &anb_info;
+   }
+#endif
+
    image =
       vk_image_create(&device->vk, pCreateInfo, pAllocator, sizeof(*image));
    if (!image)
       return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    pvr_image_init(device, pCreateInfo, image);
+
+   if (vk_image_is_android_native_buffer(&image->vk)) {
+      VkResult result =
+         vk_android_import_anb(&device->vk, pCreateInfo, pAllocator, &image->vk);
+      if (result != VK_SUCCESS) {
+         pvr_image_fini(device, image);
+         vk_image_destroy(&device->vk, pAllocator, &image->vk);
+         return result;
+      }
+   }
 
    *pImage = pvr_image_to_handle(image);
 
