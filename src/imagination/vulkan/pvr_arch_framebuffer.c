@@ -40,17 +40,16 @@ pvr_render_state_create_ppp_state(struct pvr_device *device,
       header.pres_terminate = true;
    }
 
+   const uint32_t clip_block_size =
+      PVR_GET_FEATURE_VALUE(&device->pdevice->dev_info,
+                            simple_parameter_format_version,
+                            0) == 1
+         ? 16
+         : ROGUE_TA_STATE_TERMINATE0_CLIP_RIGHT_BLOCK_SIZE_IN_PIXELS;
+
    pvr_csb_pack (&ppp_state[1], TA_STATE_TERMINATE0, term0) {
-      term0.clip_right =
-         DIV_ROUND_UP(
-            rstate->width,
-            ROGUE_TA_STATE_TERMINATE0_CLIP_RIGHT_BLOCK_SIZE_IN_PIXELS) -
-         1;
-      term0.clip_bottom =
-         DIV_ROUND_UP(
-            rstate->height,
-            ROGUE_TA_STATE_TERMINATE0_CLIP_BOTTOM_BLOCK_SIZE_IN_PIXELS) -
-         1;
+      term0.clip_right = DIV_ROUND_UP(rstate->width, clip_block_size) - 1;
+      term0.clip_bottom = DIV_ROUND_UP(rstate->height, clip_block_size) - 1;
    }
 
    pvr_csb_pack (&ppp_state[2], TA_STATE_TERMINATE1, term1) {
