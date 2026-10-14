@@ -218,6 +218,15 @@ rogue_get_macrotile_array_size(const struct pvr_device_info *dev_info)
 {
    uint32_t num_macrotiles_x;
    uint32_t num_macrotiles_y;
+   uint32_t version;
+
+   if (PVR_FEATURE_VALUE(dev_info, simple_parameter_format_version, &version))
+      version = 0;
+
+   /* The GE8100 PM still writes the macrotile array; its size is undocumented. */
+   if (PVR_HAS_FEATURE(dev_info, simple_internal_parameter_format) &&
+       version == 1)
+      return 4096U;
 
    if (PVR_HAS_FEATURE(dev_info, simple_internal_parameter_format))
       return 0;
