@@ -366,30 +366,20 @@ void pvr_image_fini(struct pvr_device *device, struct pvr_image *image)
 }
 
 #if DETECT_OS_ANDROID
-/* The layout of an AHardwareBuffer image is known only once its memory is. */
-static VkResult pvr_image_init_ahb_layout(struct pvr_device *device,
-                                          struct pvr_image *image,
-                                          struct pvr_device_memory *mem)
+/* Gralloc buffers are linear; their pitch is known only at bind time. */
+static VkResult
+pvr_image_init_gralloc_layout(struct pvr_device *device,
+                              struct pvr_image *image,
+                              VkImageDrmFormatModifierExplicitCreateInfoEXT *mod)
 {
-   VkImageDrmFormatModifierExplicitCreateInfoEXT mod;
-   VkSubresourceLayout layouts[4];
-   VkResult result;
-
-   result = vk_android_get_ahb_layout(mem->vk.ahardware_buffer,
-                                      &mod,
-                                      layouts,
-                                      ARRAY_SIZE(layouts));
-   if (result != VK_SUCCESS)
-      return vk_error(device, result);
-
-   if (mod.drmFormatModifier == DRM_FORMAT_MOD_INVALID)
-      mod.drmFormatModifier = DRM_FORMAT_MOD_LINEAR;
-   if (mod.drmFormatModifier != DRM_FORMAT_MOD_LINEAR)
+   if (mod->drmFormatModifier == DRM_FORMAT_MOD_INVALID)
+      mod->drmFormatModifier = DRM_FORMAT_MOD_LINEAR;
+   if (mod->drmFormatModifier != DRM_FORMAT_MOD_LINEAR)
       return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
 
    const VkImageCreateInfo create_info = {
       .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-      .pNext = &mod,
+      .pNext = mod,
       .flags = image->vk.create_flags,
       .imageType = image->vk.image_type,
       .format = image->vk.format,
@@ -403,6 +393,63 @@ static VkResult pvr_image_init_ahb_layout(struct pvr_device *device,
 
    image->vk.tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
    pvr_image_init(device, &create_info, image);
+
+   return VK_SUCCESS;
+}
+
+/* Android binds AHardwareBuffer memory and swapchain images (as native
+ * buffers) to images created without a layout.
+ */
+static VkResult
+pvr_image_bind_android(struct pvr_device *device,
+                       struct pvr_image *image,
+                       const VkBindImageMemoryInfo *bind_info,
+                       struct pvr_device_memory **mem,
+                       VkDeviceSize *offset)
+{
+   VkImageDrmFormatModifierExplicitCreateInfoEXT mod;
+   VkSubresourceLayout layouts[4];
+   VkResult result;
+
+   if (vk_image_is_android_hardware_buffer(&image->vk)) {
+      result = vk_android_get_ahb_layout((*mem)->vk.ahardware_buffer,
+                                         &mod,
+                                         layouts,
+                                         ARRAY_SIZE(layouts));
+      if (result != VK_SUCCESS)
+         return vk_error(device, result);
+
+      return pvr_image_init_gralloc_layout(device, image, &mod);
+   }
+
+   const VkNativeBufferANDROID *anb =
+      vk_find_struct_const(bind_info->pNext, NATIVE_BUFFER_ANDROID);
+   if (!anb)
+      return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
+
+   VkNativeBufferANDROID local_anb = *anb;
+   local_anb.pNext = NULL;
+   const VkImageCreateInfo anb_info = {
+      .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+      .pNext = &local_anb,
+   };
+
+   result = vk_android_get_anb_layout(&anb_info, &mod, layouts,
+                                      ARRAY_SIZE(layouts));
+   if (result != VK_SUCCESS)
+      return vk_error(device, result);
+
+   result = pvr_image_init_gralloc_layout(device, image, &mod);
+   if (result != VK_SUCCESS)
+      return result;
+
+   result = vk_android_import_anb_memory(&device->vk, &image->vk, anb,
+                                         &device->vk.alloc);
+   if (result != VK_SUCCESS)
+      return result;
+
+   *mem = pvr_device_memory_from_handle(image->vk.anb_memory);
+   *offset = 0;
 
    return VK_SUCCESS;
 }
@@ -454,14 +501,16 @@ VkResult pvr_BindImageMemory2(VkDevice _device,
       VkResult result;
 
 #if DETECT_OS_ANDROID
-      if (vk_image_is_android_hardware_buffer(&image->vk)) {
-         result = pvr_image_init_ahb_layout(device, image, mem);
+      if (vk_image_is_android_hardware_buffer(&image->vk) ||
+          vk_image_is_android_native_buffer_alias(&image->vk)) {
+         result = pvr_image_bind_android(device, image, &pBindInfos[i],
+                                         &mem, &offset);
          if (result != VK_SUCCESS)
             return result;
       }
 #endif
 
-#if defined(PVR_USE_WSI_PLATFORM)
+#if PVR_USE_WSI_PLATFORM
       const VkBindImageMemorySwapchainInfoKHR *swapchain_info =
          vk_find_struct_const(pBindInfos[i].pNext,
                               BIND_IMAGE_MEMORY_SWAPCHAIN_INFO_KHR);

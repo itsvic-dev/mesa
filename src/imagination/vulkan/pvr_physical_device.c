@@ -237,7 +237,7 @@ static void pvr_physical_device_get_supported_extensions(
       .EXT_tooling_info = true,
       .EXT_vertex_attribute_divisor = true,
       .EXT_zero_initialize_device_memory = true,
-#ifdef PVR_USE_WSI_PLATFORM
+#if PVR_USE_WSI_PLATFORM
       .GOOGLE_display_timing = wsi_instance_supports_google_display_timing(&instance->vk, &instance->drirc.options),
 #endif
    };
