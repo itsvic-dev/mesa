@@ -321,7 +321,7 @@ static inline void pvr_bo_free_bo(const struct pvr_device *const device,
    vk_free(&device->vk.alloc, ptr);
 }
 
-#define PVR_BO_CACHE_MAX_SIZE (16U * 1024U * 1024U)
+#define PVR_BO_CACHE_MAX_SIZE (4U * 1024U * 1024U)
 #define PVR_BO_CACHE_MAX_BO_SIZE (1U * 1024U * 1024U)
 
 static void pvr_bo_destroy(struct pvr_device *device, struct pvr_bo *pvr_bo);
