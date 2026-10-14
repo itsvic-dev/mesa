@@ -35,6 +35,7 @@
 #include "device_info/gx6250.h"
 #include "device_info/gx6650.h"
 #include "device_info/ge7800.h"
+#include "device_info/ge8100.h"
 #include "device_info/ge8300.h"
 #include "device_info/axe-1-16m.h"
 #include "device_info/bxe-2-32.h"
@@ -53,6 +54,7 @@ static const struct pvr_device_info *device_infos[] = {
    &pvr_device_info_15_5_1_64,
    &pvr_device_info_22_67_54_30,
    &pvr_device_info_22_68_54_30,
+   &pvr_device_info_22_49_21_16,
    &pvr_device_info_22_102_54_38,
    &pvr_device_info_33_15_11_3,
    &pvr_device_info_36_29_52_182,
@@ -85,6 +87,7 @@ int pvr_device_info_init(struct pvr_device_info *info, uint64_t bvnc)
       CASE_PACKED_BVNC_DEVICE_INFO(4, 46, 6, 62);
       CASE_PACKED_BVNC_DEVICE_INFO(5, 9, 1, 46);
       CASE_PACKED_BVNC_DEVICE_INFO(15, 5, 1, 64);
+      CASE_PACKED_BVNC_DEVICE_INFO(22, 49, 21, 16);
       CASE_PACKED_BVNC_DEVICE_INFO(22, 67, 54, 30);
       CASE_PACKED_BVNC_DEVICE_INFO(22, 68, 54, 30);
       CASE_PACKED_BVNC_DEVICE_INFO(22, 102, 54, 38);
