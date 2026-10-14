@@ -43,7 +43,6 @@ static const struct pvr_device_features pvr_device_features_22_V_21_16 = {
    .has_unified_store_depth = true,
    .has_usc_f16sop_u8 = true,
    .has_usc_itrsmp = true,
-   .has_usc_itrsmp_enhanced = true,
    .has_usc_itr_parallel_instances = true,
    .has_usc_min_output_registers_per_pix = true,
    .has_usc_slots = true,
