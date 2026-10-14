@@ -321,6 +321,83 @@ static inline void pvr_bo_free_bo(const struct pvr_device *const device,
    vk_free(&device->vk.alloc, ptr);
 }
 
+#define PVR_BO_CACHE_MAX_SIZE (16U * 1024U * 1024U)
+#define PVR_BO_CACHE_MAX_BO_SIZE (1U * 1024U * 1024U)
+
+static void pvr_bo_destroy(struct pvr_device *device, struct pvr_bo *pvr_bo);
+
+void pvr_bo_cache_init(struct pvr_device *device)
+{
+   simple_mtx_init(&device->bo_cache.mtx, mtx_plain);
+   list_inithead(&device->bo_cache.bos);
+   device->bo_cache.size = 0;
+}
+
+void pvr_bo_cache_fini(struct pvr_device *device)
+{
+   list_for_each_entry_safe (struct pvr_bo, pvr_bo, &device->bo_cache.bos, link) {
+      list_del(&pvr_bo->link);
+      pvr_bo_destroy(device, pvr_bo);
+   }
+
+   device->bo_cache.size = 0;
+   simple_mtx_destroy(&device->bo_cache.mtx);
+}
+
+/* Only CPU mapped buffers are cached, so that they can be cleared on reuse. */
+static bool pvr_bo_cache_put(struct pvr_device *device, struct pvr_bo *pvr_bo)
+{
+   struct pvr_bo_cache *cache = &device->bo_cache;
+   bool cached = false;
+
+   if (device->bo_store || !(pvr_bo->flags & PVR_BO_ALLOC_FLAG_CPU_MAPPED) ||
+       !pvr_bo->bo->map || pvr_bo->bo->size > PVR_BO_CACHE_MAX_BO_SIZE)
+      return false;
+
+   simple_mtx_lock(&cache->mtx);
+   if (cache->size + pvr_bo->bo->size <= PVR_BO_CACHE_MAX_SIZE) {
+      list_add(&pvr_bo->link, &cache->bos);
+      cache->size += pvr_bo->bo->size;
+      cached = true;
+   }
+   simple_mtx_unlock(&cache->mtx);
+
+   return cached;
+}
+
+static struct pvr_bo *pvr_bo_cache_take(struct pvr_device *device,
+                                        struct pvr_winsys_heap *heap,
+                                        uint64_t size,
+                                        uint64_t alignment,
+                                        uint64_t flags)
+{
+   struct pvr_bo_cache *cache = &device->bo_cache;
+   struct pvr_bo *found = NULL;
+
+   if (device->bo_store || !(flags & PVR_BO_ALLOC_FLAG_CPU_MAPPED))
+      return NULL;
+
+   simple_mtx_lock(&cache->mtx);
+   list_for_each_entry (struct pvr_bo, pvr_bo, &cache->bos, link) {
+      if (pvr_bo->heap == heap && pvr_bo->size == size &&
+          pvr_bo->flags == flags &&
+          (!alignment || (pvr_bo->vma->dev_addr.addr & (alignment - 1)) == 0)) {
+         list_del(&pvr_bo->link);
+         cache->size -= pvr_bo->bo->size;
+         found = pvr_bo;
+         break;
+      }
+   }
+   simple_mtx_unlock(&cache->mtx);
+
+   if (found) {
+      found->ref_count = 1;
+      memset(found->bo->map, 0, found->bo->size);
+   }
+
+   return found;
+}
+
 /**
  * \brief Helper interface to allocate a GPU buffer and map it to both host and
  * device virtual memory. Host mapping is conditional and is controlled by
@@ -348,6 +425,12 @@ VkResult pvr_bo_alloc(struct pvr_device *device,
    struct pvr_bo *pvr_bo;
    VkResult result;
 
+   pvr_bo = pvr_bo_cache_take(device, heap, size, alignment, flags);
+   if (pvr_bo) {
+      *pvr_bo_out = pvr_bo;
+      return VK_SUCCESS;
+   }
+
    pvr_bo = pvr_bo_alloc_bo(device);
    if (!pvr_bo) {
       result = vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
@@ -355,6 +438,9 @@ VkResult pvr_bo_alloc(struct pvr_device *device,
    }
 
    pvr_bo->ref_count = 1;
+   pvr_bo->heap = heap;
+   pvr_bo->size = size;
+   pvr_bo->flags = flags;
 
    result = device->ws->ops->buffer_create(device->ws,
                                            size,
@@ -475,6 +561,14 @@ void pvr_bo_free(struct pvr_device *device, struct pvr_bo *pvr_bo)
    if (!p_atomic_dec_zero(&pvr_bo->ref_count))
       return;
 
+   if (pvr_bo_cache_put(device, pvr_bo))
+      return;
+
+   pvr_bo_destroy(device, pvr_bo);
+}
+
+static void pvr_bo_destroy(struct pvr_device *device, struct pvr_bo *pvr_bo)
+{
 #if defined(HAVE_VALGRIND)
    vk_free(&device->vk.alloc, pvr_bo->bo->vbits);
 #endif /* defined(HAVE_VALGRIND) */
