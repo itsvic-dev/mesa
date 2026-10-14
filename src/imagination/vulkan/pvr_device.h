@@ -139,6 +139,11 @@ struct pvr_device {
    struct pvr_bo_store *bo_store;
    struct pvr_bo_cache bo_cache;
 
+   struct {
+      simple_mtx_t mtx;
+      struct hash_table *table;
+   } eot_cache;
+
    struct pvr_bo *robustness_buffer;
 
    struct vk_sync *presignaled_sync;

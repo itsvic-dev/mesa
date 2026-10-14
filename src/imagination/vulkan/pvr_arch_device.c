@@ -20,6 +20,7 @@
 
 #include "pvr_border.h"
 #include "pvr_clear.h"
+#include "pvr_cmd_buffer.h"
 #include "pvr_entrypoints.h"
 #include "pvr_framebuffer.h"
 #include "pvr_free_list.h"
@@ -775,6 +776,8 @@ VkResult PVR_PER_ARCH(create_device)(struct pvr_physical_device *pdevice,
                             device,
                             PVR_SUBALLOCATOR_VIS_TEST_SIZE);
 
+   pvr_arch_eot_cache_init(device);
+
    if (p_atomic_inc_return(&instance->active_device_count) >
        PVR_SECONDARY_DEVICE_THRESHOLD) {
       initial_free_list_size = PVR_SECONDARY_DEVICE_FREE_LIST_INITAL_SIZE;
@@ -899,6 +902,7 @@ err_pvr_free_list_destroy:
 err_dec_device_count:
    p_atomic_dec(&device->instance->active_device_count);
 
+   pvr_arch_eot_cache_fini(device);
    pvr_bo_suballocator_fini(&device->suballoc_vis_test);
    pvr_bo_suballocator_fini(&device->suballoc_usc);
    pvr_bo_suballocator_fini(&device->suballoc_transfer);
@@ -958,6 +962,7 @@ void PVR_PER_ARCH(destroy_device)(struct pvr_device *device,
    pvr_bo_suballoc_free(device->nop_program.pds.pvr_bo);
    pvr_bo_suballoc_free(device->nop_program.usc);
    pvr_free_list_destroy(device->global_free_list);
+   pvr_arch_eot_cache_fini(device);
    pvr_bo_suballocator_fini(&device->suballoc_vis_test);
    pvr_bo_suballocator_fini(&device->suballoc_usc);
    pvr_bo_suballocator_fini(&device->suballoc_transfer);
