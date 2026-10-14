@@ -206,16 +206,6 @@ write_storage_image(const struct pvr_descriptor_set *set,
       image_view->image_state[is_cube ? PVR_TEXTURE_STATE_STORAGE
                                       : PVR_TEXTURE_STATE_SAMPLE];
 
-   if (!PVR_HAS_FEATURE(dev_info, tpu_extended_integer_lookup)) {
-      struct ROGUE_TEXSTATE_STRIDE_IMAGE_WORD1 word1;
-      ROGUE_TEXSTATE_STRIDE_IMAGE_WORD1_unpack(&storage_image_desc.words[1],
-                                               &word1);
-
-      word1.index_lookup = true;
-      ROGUE_TEXSTATE_STRIDE_IMAGE_WORD1_pack(&storage_image_desc.words[1],
-                                             &word1);
-   }
-
    memcpy(desc_mapping, &storage_image_desc, sizeof(storage_image_desc));
 }
 
