@@ -28,6 +28,11 @@
  */
 
 #include "pvr_device.h"
+#include "util/detect_os.h"
+
+#if DETECT_OS_ANDROID
+#include <vndk/hardware_buffer.h>
+#endif
 
 #include <assert.h>
 #include <fcntl.h>
@@ -331,6 +336,18 @@ VkResult pvr_AllocateMemory(VkDevice _device,
        * If the import fails, we leave the file descriptor open.
        */
       close(fd_info->fd);
+#if DETECT_OS_ANDROID
+   } else if (mem->vk.ahardware_buffer) {
+      /* The fd stays owned by the AHardwareBuffer. */
+      const native_handle_t *handle =
+         AHardwareBuffer_getNativeHandle(mem->vk.ahardware_buffer);
+
+      result = device->ws->ops->buffer_create_from_fd(device->ws,
+                                                      handle->data[0],
+                                                      &mem->bo);
+      if (result != VK_SUCCESS)
+         goto err_vk_device_memory_destroy;
+#endif
    } else {
       /* Align physical allocations to the page size of the heap that will be
        * used when binding device memory (see pvr_bind_memory()) to ensure the

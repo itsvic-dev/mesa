@@ -365,6 +365,49 @@ void pvr_image_fini(struct pvr_device *device, struct pvr_image *image)
       pvr_unbind_memory(device, image->vma);
 }
 
+#if DETECT_OS_ANDROID
+/* The layout of an AHardwareBuffer image is known only once its memory is. */
+static VkResult pvr_image_init_ahb_layout(struct pvr_device *device,
+                                          struct pvr_image *image,
+                                          struct pvr_device_memory *mem)
+{
+   VkImageDrmFormatModifierExplicitCreateInfoEXT mod;
+   VkSubresourceLayout layouts[4];
+   VkResult result;
+
+   result = vk_android_get_ahb_layout(mem->vk.ahardware_buffer,
+                                      &mod,
+                                      layouts,
+                                      ARRAY_SIZE(layouts));
+   if (result != VK_SUCCESS)
+      return vk_error(device, result);
+
+   if (mod.drmFormatModifier == DRM_FORMAT_MOD_INVALID)
+      mod.drmFormatModifier = DRM_FORMAT_MOD_LINEAR;
+   if (mod.drmFormatModifier != DRM_FORMAT_MOD_LINEAR)
+      return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
+
+   const VkImageCreateInfo create_info = {
+      .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+      .pNext = &mod,
+      .flags = image->vk.create_flags,
+      .imageType = image->vk.image_type,
+      .format = image->vk.format,
+      .extent = image->vk.extent,
+      .mipLevels = image->vk.mip_levels,
+      .arrayLayers = image->vk.array_layers,
+      .samples = image->vk.samples,
+      .tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT,
+      .usage = image->vk.usage,
+   };
+
+   image->vk.tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
+   pvr_image_init(device, &create_info, image);
+
+   return VK_SUCCESS;
+}
+#endif
+
 /* clang-format off */
 /* Consider a 4 page buffer object.
  *   _________________________________________
@@ -409,6 +452,14 @@ VkResult pvr_BindImageMemory2(VkDevice _device,
       VK_FROM_HANDLE(pvr_image, image, pBindInfos[i].image);
       VkDeviceSize offset = pBindInfos[i].memoryOffset;
       VkResult result;
+
+#if DETECT_OS_ANDROID
+      if (vk_image_is_android_hardware_buffer(&image->vk)) {
+         result = pvr_image_init_ahb_layout(device, image, mem);
+         if (result != VK_SUCCESS)
+            return result;
+      }
+#endif
 
 #if defined(PVR_USE_WSI_PLATFORM)
       const VkBindImageMemorySwapchainInfoKHR *swapchain_info =

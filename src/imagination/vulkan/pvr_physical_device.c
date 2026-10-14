@@ -38,6 +38,10 @@
 #include "util/detect_os.h"
 #include "vk_android.h"
 
+#if DETECT_OS_ANDROID
+#include "util/u_gralloc/u_gralloc.h"
+#endif
+
 #define VK_VENDOR_ID_IMAGINATION 0x1010
 
 void pvr_physical_device_dump_info(const struct pvr_physical_device *pdevice,
@@ -121,6 +125,15 @@ void pvr_physical_device_free_pipeline_cache(
 #endif /* ENABLE_SHADER_CACHE */
 }
 
+#if DETECT_OS_ANDROID
+static bool pvr_has_gralloc(void)
+{
+   struct u_gralloc *gralloc = vk_android_get_ugralloc();
+
+   return gralloc && u_gralloc_get_type(gralloc) != U_GRALLOC_TYPE_FALLBACK;
+}
+#endif
+
 static void pvr_physical_device_get_supported_extensions(
    struct vk_device_extension_table *extensions, struct pvr_instance* instance)
 {
@@ -186,7 +199,8 @@ static void pvr_physical_device_get_supported_extensions(
       .KHR_vertex_attribute_divisor = true,
       .KHR_workgroup_memory_explicit_layout = true,
 #if DETECT_OS_ANDROID
-      .ANDROID_native_buffer = vk_android_get_ugralloc() != NULL,
+      .ANDROID_external_memory_android_hardware_buffer = pvr_has_gralloc(),
+      .ANDROID_native_buffer = pvr_has_gralloc(),
 #endif
       .EXT_border_color_swizzle = true,
       .EXT_color_write_enable = true,

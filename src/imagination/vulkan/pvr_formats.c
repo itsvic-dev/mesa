@@ -48,6 +48,7 @@
 #include "util/log.h"
 #include "util/macros.h"
 #include "util/u_math.h"
+#include "vk_android.h"
 #include "vk_enum_defines.h"
 #include "vk_enum_to_str.h"
 #include "vk_format.h"
@@ -869,6 +870,10 @@ VkResult pvr_GetPhysicalDeviceImageFormatProperties2(
             VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT |
             VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
          break;
+      case VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID:
+         return vk_android_get_ahb_image_properties(physicalDevice,
+                                                    pImageFormatInfo,
+                                                    pImageFormatProperties);
       default:
          return vk_error(pdevice, VK_ERROR_FORMAT_NOT_SUPPORTED);
       }
@@ -932,6 +937,11 @@ void pvr_GetPhysicalDeviceExternalBufferProperties(
          VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT |
          VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
       /* clang-format on */
+      return;
+   case VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID:
+      vk_android_get_ahb_buffer_properties(physicalDevice,
+                                           pExternalBufferInfo,
+                                           pExternalBufferProperties);
       return;
    default:
       break;
