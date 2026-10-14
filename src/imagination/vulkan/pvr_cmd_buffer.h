@@ -657,6 +657,14 @@ VkResult
 
 #   define pvr_arch_cmd_buffer_end_sub_cmd PVR_PER_ARCH(cmd_buffer_end_sub_cmd)
 
+void PVR_PER_ARCH(eot_cache_init)(struct pvr_device *device);
+
+#   define pvr_arch_eot_cache_init PVR_PER_ARCH(eot_cache_init)
+
+void PVR_PER_ARCH(eot_cache_fini)(struct pvr_device *device);
+
+#   define pvr_arch_eot_cache_fini PVR_PER_ARCH(eot_cache_fini)
+
 void PVR_PER_ARCH(compute_generate_fence)(
    struct pvr_cmd_buffer *cmd_buffer,
    struct pvr_sub_cmd_compute *const sub_cmd,

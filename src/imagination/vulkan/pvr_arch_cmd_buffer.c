@@ -33,6 +33,7 @@
 
 #include "hwdef/rogue_hw_defs.h"
 #include "hwdef/rogue_hw_utils.h"
+#include "util/hash_table.h"
 #include "pvr_blit.h"
 #include "pvr_bo.h"
 #include "pvr_buffer.h"
@@ -530,6 +531,126 @@ pvr_cmd_buffer_upload_pds_data(struct pvr_cmd_buffer *const cmd_buffer,
                                          pds_upload_out);
 }
 
+#define PVR_EOT_CACHE_MAX_ENTRIES 256U
+
+struct pvr_eot_cache_key {
+   uint32_t emit_count;
+   uint32_t msaa_samples;
+   uint32_t num_output_regs;
+   uint32_t padding;
+   uint64_t tile_buffer_addrs[PVR_MAX_COLOR_ATTACHMENTS];
+   uint32_t state_words[PVR_MAX_COLOR_ATTACHMENTS *
+                        ROGUE_NUM_PBESTATE_STATE_WORDS];
+};
+
+struct pvr_eot_cache_entry {
+   struct pvr_eot_cache_key key;
+   struct pvr_suballoc_bo *usc;
+   uint32_t temps;
+};
+
+static uint32_t pvr_eot_cache_hash(const void *key)
+{
+   return _mesa_hash_data(key, sizeof(struct pvr_eot_cache_key));
+}
+
+static bool pvr_eot_cache_equal(const void *a, const void *b)
+{
+   return !memcmp(a, b, sizeof(struct pvr_eot_cache_key));
+}
+
+static void pvr_eot_cache_entry_free(struct hash_entry *hash_entry)
+{
+   struct pvr_eot_cache_entry *entry = hash_entry->data;
+
+   pvr_bo_suballoc_free(entry->usc);
+   free(entry);
+}
+
+void PVR_PER_ARCH(eot_cache_init)(struct pvr_device *device)
+{
+   simple_mtx_init(&device->eot_cache.mtx, mtx_plain);
+   device->eot_cache.table =
+      _mesa_hash_table_create(NULL, pvr_eot_cache_hash, pvr_eot_cache_equal);
+}
+
+void PVR_PER_ARCH(eot_cache_fini)(struct pvr_device *device)
+{
+   _mesa_hash_table_destroy(device->eot_cache.table, pvr_eot_cache_entry_free);
+   device->eot_cache.table = NULL;
+   simple_mtx_destroy(&device->eot_cache.mtx);
+}
+
+/* Returns a device-owned end-of-tile program, or NULL if it cannot be cached. */
+static const struct pvr_eot_cache_entry *
+pvr_eot_cache_get(struct pvr_device *device, struct pvr_eot_props *props)
+{
+   const uint32_t cache_line_size =
+      pvr_get_slc_cache_line_size(&device->pdevice->dev_info);
+   struct pvr_eot_cache_entry *entry;
+   struct pvr_eot_cache_key key;
+   struct hash_entry *hash_entry;
+   pco_shader *eot;
+   VkResult result;
+
+   if (!device->eot_cache.table ||
+       props->emit_count > PVR_MAX_COLOR_ATTACHMENTS)
+      return NULL;
+
+   memset(&key, 0, sizeof(key));
+   key.emit_count = props->emit_count;
+   key.msaa_samples = props->msaa_samples;
+   key.num_output_regs = props->num_output_regs;
+   memcpy(key.tile_buffer_addrs,
+          props->tile_buffer_addrs,
+          sizeof(key.tile_buffer_addrs));
+   memcpy(key.state_words,
+          props->state_words,
+          props->emit_count * ROGUE_NUM_PBESTATE_STATE_WORDS *
+             sizeof(uint32_t));
+
+   simple_mtx_lock(&device->eot_cache.mtx);
+
+   hash_entry = _mesa_hash_table_search(device->eot_cache.table, &key);
+   if (hash_entry) {
+      simple_mtx_unlock(&device->eot_cache.mtx);
+      return hash_entry->data;
+   }
+
+   if (device->eot_cache.table->entries >= PVR_EOT_CACHE_MAX_ENTRIES) {
+      simple_mtx_unlock(&device->eot_cache.mtx);
+      return NULL;
+   }
+
+   entry = calloc(1, sizeof(*entry));
+   if (!entry) {
+      simple_mtx_unlock(&device->eot_cache.mtx);
+      return NULL;
+   }
+
+   entry->key = key;
+
+   eot = pvr_usc_eot(device->pdevice->pco_ctx, props, &device->pdevice->dev_info);
+   entry->temps = pco_shader_data(eot)->common.temps;
+   result = pvr_gpu_upload_usc(device,
+                               pco_shader_binary_data(eot),
+                               pco_shader_binary_size(eot),
+                               MAX2(4, cache_line_size),
+                               &entry->usc);
+   ralloc_free(eot);
+
+   if (result != VK_SUCCESS) {
+      free(entry);
+      simple_mtx_unlock(&device->eot_cache.mtx);
+      return NULL;
+   }
+
+   _mesa_hash_table_insert(device->eot_cache.table, &entry->key, entry);
+   simple_mtx_unlock(&device->eot_cache.mtx);
+
+   return entry;
+}
+
 /* pbe_cs_words must be an array of length emit_count with
  * ROGUE_NUM_PBESTATE_STATE_WORDS entries
  */
@@ -551,7 +672,9 @@ static VkResult pvr_sub_cmd_gfx_per_job_fragment_programs_create_and_upload(
    struct pvr_device *const device = cmd_buffer->device;
    const struct pvr_device_tile_buffer_state *tile_buffer_state =
       &device->tile_buffer_state;
+   const struct pvr_eot_cache_entry *eot_cached;
    struct pvr_suballoc_bo *usc_eot_program = NULL;
+   pvr_dev_addr_t eot_addr;
    struct pvr_eot_props props = {
       .emit_count = emit_count,
       .shared_words = false,
@@ -583,23 +706,32 @@ static VkResult pvr_sub_cmd_gfx_per_job_fragment_programs_create_and_upload(
          props.msaa_samples = 1;
    }
 
-   eot =
-      pvr_usc_eot(device->pdevice->pco_ctx, &props, &device->pdevice->dev_info);
-   usc_temp_count = pco_shader_data(eot)->common.temps;
+   eot_cached = pvr_eot_cache_get(device, &props);
+   if (eot_cached) {
+      usc_temp_count = eot_cached->temps;
+      eot_addr = eot_cached->usc->dev_addr;
+   } else {
+      eot = pvr_usc_eot(device->pdevice->pco_ctx,
+                        &props,
+                        &device->pdevice->dev_info);
+      usc_temp_count = pco_shader_data(eot)->common.temps;
 
-   result = pvr_cmd_buffer_upload_usc(cmd_buffer,
-                                      pco_shader_binary_data(eot),
-                                      pco_shader_binary_size(eot),
-                                      4,
-                                      &usc_eot_program);
+      result = pvr_cmd_buffer_upload_usc(cmd_buffer,
+                                         pco_shader_binary_data(eot),
+                                         pco_shader_binary_size(eot),
+                                         4,
+                                         &usc_eot_program);
 
-   ralloc_free(eot);
+      ralloc_free(eot);
 
-   if (result != VK_SUCCESS)
-      return result;
+      if (result != VK_SUCCESS)
+         return result;
+
+      eot_addr = usc_eot_program->dev_addr;
+   }
 
    pvr_pds_setup_doutu(&pixel_event_program.task_control,
-                       usc_eot_program->dev_addr.addr,
+                       eot_addr.addr,
                        usc_temp_count,
                        ROGUE_PDSINST_DOUTU_SAMPLE_RATE_INSTANCE,
                        false);
@@ -636,8 +768,10 @@ static VkResult pvr_sub_cmd_gfx_per_job_fragment_programs_create_and_upload(
    return result;
 
 err_free_usc_pixel_program:
-   list_del(&usc_eot_program->link);
-   pvr_bo_suballoc_free(usc_eot_program);
+   if (usc_eot_program) {
+      list_del(&usc_eot_program->link);
+      pvr_bo_suballoc_free(usc_eot_program);
+   }
 
    return result;
 }
