@@ -127,10 +127,18 @@ void pvr_arch_rt_mtile_info_init(const struct pvr_device_info *dev_info,
 
    rogue_get_num_macrotiles_xy(dev_info, &info->mtiles_x, &info->mtiles_y);
 
-   if (PVR_HAS_FEATURE(dev_info, simple_internal_parameter_format)) {
-      assert(PVR_GET_FEATURE_VALUE(dev_info,
-                                   simple_parameter_format_version,
-                                   0) == 2);
+   if (PVR_HAS_FEATURE(dev_info, simple_internal_parameter_format) &&
+       PVR_GET_FEATURE_VALUE(dev_info, simple_parameter_format_version, 0) ==
+          1) {
+      info->mtile_x1 = info->num_tiles_x;
+      info->mtile_y1 = info->num_tiles_y;
+      info->mtile_x2 = info->num_tiles_x;
+      info->mtile_y2 = info->num_tiles_y;
+      info->mtile_x3 = info->num_tiles_x;
+      info->mtile_y3 = info->num_tiles_y;
+      info->x_tile_max = info->num_tiles_x - 1;
+      info->y_tile_max = info->num_tiles_y - 1;
+   } else if (PVR_HAS_FEATURE(dev_info, simple_internal_parameter_format)) {
       /* Set up 16 macrotiles with a multiple of 2x2 tiles per macrotile,
        * which is aligned to a tile group.
        */
