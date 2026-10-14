@@ -57,6 +57,19 @@ struct pvr_bo {
    struct pvr_winsys_bo *bo;
    struct pvr_winsys_vma *vma;
    uint32_t ref_count;
+
+   struct pvr_winsys_heap *heap;
+   uint64_t size;
+   uint64_t flags;
+};
+
+/* Freed buffers that stay mapped, so that allocating them again needs no
+ * kernel calls.
+ */
+struct pvr_bo_cache {
+   simple_mtx_t mtx;
+   struct list_head bos;
+   uint64_t size;
 };
 
 struct pvr_suballocator {
@@ -152,6 +165,9 @@ pvr_bo_cpu_map_unchanged(struct pvr_device *device, struct pvr_bo *pvr_bo)
 #endif /* defined(HAVE_VALGRIND) */
 
 struct pvr_bo_store;
+
+void pvr_bo_cache_init(struct pvr_device *device);
+void pvr_bo_cache_fini(struct pvr_device *device);
 
 VkResult pvr_bo_store_create(struct pvr_device *device);
 void pvr_bo_store_destroy(struct pvr_device *device);
