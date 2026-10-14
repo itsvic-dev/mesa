@@ -438,6 +438,9 @@ static pco_instr *trans_load_input_fs(trans_ctx *tctx,
 
    enum glsl_interp_mode interp_mode = var->data.interpolation;
 
+   bool usc_itrsmp_enhanced =
+      PVR_HAS_FEATURE(tctx->pco_ctx->dev_info, usc_itrsmp_enhanced);
+
    /* Setup iteration mode. */
    enum pco_itr_mode itr_mode = PCO_ITR_MODE_PIXEL;
    assert(!(var->data.sample && var->data.centroid));
@@ -471,6 +474,10 @@ static pco_instr *trans_load_input_fs(trans_ctx *tctx,
       }
    }
 
+   /* Without enhanced iterators, pixel and centroid iteration use the pixel corner. */
+   if (!usc_itrsmp_enhanced)
+      itr_mode = PCO_ITR_MODE_SAMPLE;
+
    if (location == VARYING_SLOT_POS) {
       /* Only scalar supported for now. */
       /* TODO: support vector for zw. */
@@ -489,6 +496,9 @@ static pco_instr *trans_load_input_fs(trans_ctx *tctx,
                             pco_ref_hwreg(PCO_SR_Y_S, PCO_REG_CLASS_SPEC) };
          pco_ref xy_p[] = { pco_ref_hwreg(PCO_SR_X_P, PCO_REG_CLASS_SPEC),
                             pco_ref_hwreg(PCO_SR_Y_P, PCO_REG_CLASS_SPEC) };
+
+         if (!usc_itrsmp_enhanced)
+            return pco_mov(&tctx->b, dest, xy_s[component]);
 
          return pco_csel(&tctx->b,
                          dest,
@@ -523,9 +533,6 @@ static pco_instr *trans_load_input_fs(trans_ctx *tctx,
    pco_ref coeffs = pco_ref_hwreg_vec(coeffs_index,
                                       PCO_REG_CLASS_COEFF,
                                       ROGUE_USC_COEFFICIENT_SET_SIZE * chans);
-
-   bool usc_itrsmp_enhanced =
-      PVR_HAS_FEATURE(tctx->pco_ctx->dev_info, usc_itrsmp_enhanced);
 
    switch (interp_mode) {
    case INTERP_MODE_SMOOTH: {
